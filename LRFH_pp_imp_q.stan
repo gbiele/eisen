@@ -8,8 +8,8 @@ data {
   matrix[N, M] X;
   real y[N];
   int M_quadratic;             // number of variables tfor scaling and quadratic terms
-  real scale_sd[M_quadratic];  // stand deviations for scaling
-  real scale_mu[M_quadratic];  // means for scaling
+  real scale_sd[M+M_quadratic];  // stand deviations for scaling
+  real scale_mu[M+M_quadratic];  // means for scaling
   int transf_idx[2];           // start and end idex of variables that need to be log-transformed
   int N_missing;               // number of missing values
   int miss_row[N_missing];     // row indices for missing values
@@ -42,7 +42,7 @@ transformed data {
     }
     // add quadratic term
     for (n in 1:N) 
-      X_scaled[n,M+k] = X_scaled[n,k]^2;
+      X_scaled[n,M+k] = (X_scaled[n,k]^2-scale_mu[M+k])/scale_sd[M+k];
   }
 }
 
@@ -92,8 +92,11 @@ model {
     Xi[miss_row[i],miss_col[i]] = miss_col[i] > M_quadratic ? 
                                   inv_logit(imputations[i]) : 
                                   imputations[i];
-    if (miss_col[i] <= M_quadratic)
-      Xi[miss_row[i], M + miss_col[i]] = Xi[miss_row[i], miss_col[i]]^2;
+    if (miss_col[i] <= M_quadratic) {
+       int i2 = M + miss_col[i];
+       Xi[miss_row[i], i2] = (Xi[miss_row[i], miss_col[i]]^2-scale_mu[i2]) / 
+                              scale_sd[i2];
+    }
   }
   
   y ~ normal(Xi * beta + alpha, sigma);
@@ -104,11 +107,14 @@ generated quantities {
   real y_hat[N];
   // impute missing values and add quadratic term
   for (i in 1:N_missing) {
-    Xi[miss_row[i],miss_col[i]] = miss_col[i] > M_quadratic ?
+    Xi[miss_row[i],miss_col[i]] = miss_col[i] > M_quadratic ? 
                                   inv_logit(imputations[i]) : 
                                   imputations[i];
-    if (miss_col[i] <= M_quadratic)
-      Xi[miss_row[i], M + miss_col[i]] = Xi[miss_row[i], miss_col[i]]^2;
+    if (miss_col[i] <= M_quadratic) {
+       int i2 = M + miss_col[i];
+       Xi[miss_row[i], i2] = (Xi[miss_row[i], miss_col[i]]^2-scale_mu[i2]) / 
+                              scale_sd[i2];
+    }
   }
   
   for (n in 1:N) y_hat[n] = normal_rng(dot_product(Xi[n,], beta) + alpha, sigma);

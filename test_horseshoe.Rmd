@@ -271,20 +271,31 @@ MBQI = MBQ + N_interactions
 
 X_scaled = matrix(NA,nrow = N, ncol = MBQI) 
 X_scaled[,1:MB] = as.matrix(preX)
-X_scaled[is.na(X_scaled)] = 0
+
+
+scale_mu = c(scale_mu, + rep(0,length(c(binary_vars,zero_inflated_vars,scale_vars))))
+scale_sd = c(scale_sd, + rep(1,length(c(binary_vars,zero_inflated_vars,scale_vars))))
 
 
 for (k in 1:M_quadratic) {
+  X_scaled[is.na(X_scaled[,k]),k] = mean(preX[,k],na.rm = T)
   if (k >= transf_idx[1]) {
     X_scaled[,k][X_scaled[,k] == 0] = 1
     X_scaled[,k] = (log(X_scaled[,k])-scale_mu[k])/scale_sd[k]
   } else {
     X_scaled[,k] = (X_scaled[,k]-scale_mu[k])/scale_sd[k]
   }
-  X_scaled[,MB+k] = X_scaled[,k]^2
+  
+  scale_sd[MB+k] = sd(X_scaled[!is.na(preX[,k]),k]^2,na.rm = T)
+  scale_mu[MB+k] = mean(X_scaled[!is.na(preX[,k]),k]^2,na.rm = T)
+  
+  X_scaled[,MB+k] = ((X_scaled[,k]^2)-scale_mu[MB+k])/scale_sd[MB+k]
 }
 
-inames = c()
+for (k in which(colSums(is.na(X_scaled[,1:MBQ]))>0)) {
+  X_scaled[is.na(X_scaled[,k]),k] = 0
+}
+
 for (i in 1:N_interactions) {
   X_scaled[,MBQ + i ] = X_scaled[,interactions[1,i]] * X_scaled[,interactions[2,i]]
 }
@@ -385,15 +396,15 @@ standata = list(N = nrow(preX),
                 M = ncol(preX),
                 X = preX,
                 y = y,
-                m0 = 10,
-                slab_scale = .5,
                 N_missing = N_missing,
                 miss_row = miss_row,
                 miss_col = miss_col,
                 M_quadratic = M_quadratic,
                 scale_sd = scale_sd,
                 scale_mu = scale_mu,
-                transf_idx = range(transf_idx))
+                transf_idx = range(transf_idx),
+                m0 = 10,
+                slab_scale = .5)
 
 ```
 
@@ -416,9 +427,9 @@ run the stan program (takes 1-2 hours with the full data set)
 options(mc.cores = 4)
 sf = sampling(sm,
               data = standata,
-              iter = 500,
+              iter = 1000,
               pars = c("imputations","Xi"),
-              control = list(adapt_delta = .8),
+              control = list(adapt_delta = .95),
               include = FALSE)
 save(sf,y,file = "sf.Rdata")
 ```
