@@ -1,15 +1,23 @@
 ---
+<<<<<<< HEAD
 title: "Bayesian sparse regression to estimate s_ferritin from MoBa questionnaire data"
 author: "Guido Biele"
 date: "04 September 2018"
 output:
   html_document:
     df_print: paged
+=======
+title: "TryHorseShoe"
+author: "Guido Biele"
+date: "31 august 2018"
+output: pdf_document
+>>>>>>> abc65ac5285fa539a5342ab3d903ead66e14fce2
 ---
 
 ```{r setup, include=FALSE}
 knitr::opts_chunk$set(echo = TRUE)
 library(moments)
+<<<<<<< HEAD
 library(entropy)
 library(rstan)
 library(bayesplot)
@@ -17,6 +25,11 @@ library(gplots)
 ```
 
 ## Data preparation
+=======
+library(rstan)
+```
+
+>>>>>>> abc65ac5285fa539a5342ab3d903ead66e14fce2
 
 We start by doing some data cleaning. I just set a few values which are much different than other values for a variable to NA.
 ```{r }
@@ -71,7 +84,11 @@ for (v in left_skewed) {
 ```
 
 
+<<<<<<< HEAD
 Next we do log transformations for selected variables to get rid of the right-skewed values. We are also plotting histograms before and after  transformation for the variables we transform. 
+=======
+Next we do log transformations for slected variables to get rid of the right-skewed values. We are also plotting histograms before and after  transformation for the variables we transform. 
+>>>>>>> abc65ac5285fa539a5342ab3d903ead66e14fce2
 ```{r, fig.height=11, fig.width=3.5} 
 
 skewed_numvars = names(which(apply(mydata[,numvars],2,skewness, na.rm = T) > .7))
@@ -109,7 +126,11 @@ for (v in skewed_numvars) {
 
 Now lets have a first look at the correlation matrix.
 
+<<<<<<< HEAD
 ```{r, figure.width = 8, fig.height=8}
+=======
+```{r}
+>>>>>>> abc65ac5285fa539a5342ab3d903ead66e14fce2
 nmat = matrix(NA, ncol = length(vars), nrow = nrow(mydata))
 colnames(nmat) = vars
 for (v in vars) {
@@ -121,6 +142,7 @@ for (v in vars) {
 }
 
 cm = cor(nmat, use = "pairwise.complete.obs")
+<<<<<<< HEAD
 diag(cm) = NA
 heatmap.g = function(cm, key = T, margins = c(5,5)) {
   heatmap.2(cm,
@@ -139,14 +161,25 @@ heatmap.g = function(cm, key = T, margins = c(5,5)) {
           trace = "none")
 }
 heatmap.g(cm)
+=======
+diag(cm) = 0
+heatmap.2(cm)
+>>>>>>> abc65ac5285fa539a5342ab3d903ead66e14fce2
 ```
 
 Lets focus on high correlations :
 
+<<<<<<< HEAD
 ```{r,figure.width = 3, fig.height=4}
 large_cors = names(which(colSums(abs(cm) > .8,na.rm = T) > 0))
 hcrs = cm[large_cors,large_cors]
 heatmap.g(hcrs, key = F, margins = c(8,8))
+=======
+```{r}
+large_cors = names(which(colSums(abs(cm) > .9) > 0))
+hcrs = cm[large_cors,large_cors]
+heatmap.2(hcrs)
+>>>>>>> abc65ac5285fa539a5342ab3d903ead66e14fce2
 ```
 
 So we have a few variables that seem redundant. We will deal with them by just removing them.
@@ -157,6 +190,7 @@ remove_vars = c("multiple_pregancies","s_any_iron_Q2","Hb_low_wk","CivilStatus")
 CivilStatus is just an inconvenient nominal variable that in my experience explains little in MoBa analyses, so I just remove it.
 
 
+<<<<<<< HEAD
 ## Prepare standata
 
 Now we prepare data for a model with automatic shrinkage. 
@@ -167,6 +201,16 @@ To reiterate: Outside Stan we only generate a design matrix with columns for eac
 
 
 We start by scaling variables and saving scaling values. The matrix preX that is prepared below is the basic design matrix that includes all variables which will be log-transformed, scaled, and used to generate quadratic terms for numeric variables in Stan.
+=======
+Now we prepare data for a model with automatic shrinkage. 
+The special challange here is that we want to use quadratic terms (and later maybe all pairwise interactions) while also imputing missing data.
+Hence, we have a somewhat elaborate procedure to pre-process the data and prepare the complete design matrix in the Stan model itself.
+
+To reiterate: Outside Stan we only generate a design matrix with columns for each basic variable. Inside Stan we generate the quadratic (and interaction) terms once for all data and then at each iteration of the sampling process again for all imputeted variables.
+
+
+We start by scaling variables and saveing scaling values. The matrix preX that is prepared below is the basic design matrix that includes all variables which will be log-transformed, scaled, and used to generate quadratic terms for numeric variables in Stan.
+>>>>>>> abc65ac5285fa539a5342ab3d903ead66e14fce2
 
 Let's define different types of variables which will be treated differently.
 
@@ -231,15 +275,24 @@ for (v in 1:length(scale_vars)) {
   }
 }
 
+<<<<<<< HEAD
 par(mfrow = c(4,5),
+=======
+par(mfrow = c(5,6),
+>>>>>>> abc65ac5285fa539a5342ab3d903ead66e14fce2
     mar=c(1.5,1.5,2,1), mgp=c(2,.2,0), tck=-.01)
 hs = sapply(scale_vars,
             function(x) hist(preX[,x],main = x,ylab = ""))
 
 ```
 
+<<<<<<< HEAD
 ### Pairwise interactions
 Next we prepare all pairwise interactions and remove interactions of numeric variables with its derived binary variable.
+=======
+
+Next we prepare all pairwise interactions and remove interactions of numeric variables with its derived binary variable
+>>>>>>> abc65ac5285fa539a5342ab3d903ead66e14fce2
 ```{r}
 interactions = combn(1:ncol(preX),2)
 rm_interactions = c()
@@ -255,7 +308,11 @@ interactions = interactions[,-rm_interactions]
 ```
 
 
+<<<<<<< HEAD
 To speed up the fitting, we remove interaction variables that have a low entropy or are highly correlated with other (non-interaction) variables. 
+=======
+To speed up the fitting, we remove interaction variables that have a low entropy or are highly correlated with other (non-iteraction) variables. 
+>>>>>>> abc65ac5285fa539a5342ab3d903ead66e14fce2
 To do this, we first need to do the scaling that will later also be done in Stan here in R.
 ```{r}
 
@@ -340,8 +397,11 @@ N_interactions = ncol(N_interactions)
 We removed `r length(rm_interactions)` interactions due to high correlations with basic variables.
 
 
+<<<<<<< HEAD
 ### Prepare imputation in Stan model
 
+=======
+>>>>>>> abc65ac5285fa539a5342ab3d903ead66e14fce2
 To prepare fast imputation in the Stan model, we also generate information about which interactions need to be re-calculated after imputation in Stan. In the same section, we also generate indices for missing data.
 
 ```{r}
@@ -385,6 +445,7 @@ standata = list(N = nrow(preX),
                 M = ncol(preX),
                 X = preX,
                 y = y,
+<<<<<<< HEAD
                 m0 = 10,
                 slab_scale = .5,
                 N_missing = N_missing,
@@ -402,6 +463,24 @@ standata = list(N = nrow(preX),
 
 ``` {r}
 cat(readLines("LRFH_pp_imp_q.stan"),sep = '\n')
+=======
+                m0 = 20,
+                slab_scale = .5,
+                N_missing = N_missing,
+                N_has_missing = N_has_missing,
+                miss_row = idx_miss_interacts[,1],
+                miss_col = idx_miss_interacts[,2],
+                M_quadratic = M_quadratic,
+                scale_sd = scale_sd,
+                scale_mu = scale_mu,
+                transf_idx = range(transf_idx),
+                has_missing = has_missing,
+                N_interactions = N_interactions,
+                interactions = interactions,
+                N_missing_interactions = N_missing_interactions,
+                missing_interactions = missing_interactions)
+
+>>>>>>> abc65ac5285fa539a5342ab3d903ead66e14fce2
 ```
 
 compile the stan program
@@ -412,7 +491,11 @@ sm = stan_model("LRFH_pp_imp_q.stan",
 
 run the stan program (takes 1-2 hours with the full data set)
 
+<<<<<<< HEAD
 ```{r, eval=F}
+=======
+```{r}
+>>>>>>> abc65ac5285fa539a5342ab3d903ead66e14fce2
 options(mc.cores = 4)
 sf = sampling(sm,
               data = standata,
@@ -420,6 +503,7 @@ sf = sampling(sm,
               pars = c("imputations","Xi"),
               control = list(adapt_delta = .8),
               include = FALSE)
+<<<<<<< HEAD
 save(sf,y,file = "sf.Rdata")
 ```
 
@@ -444,6 +528,18 @@ plot(y,y_hat,
      main = paste0("r_square(y,y_hat)=",
                    round(cor(y,y_hat)^2,
                          digits = 2)))
+=======
+```
+
+plot correlation of observed and predicted s_ferritin levels.
+```{r}
+y_hat = summary(sf,"y_hat")$summary[,"mean"]
+plot(y,y_hat,
+     main = paste0("r_square(y,y_hat)=",
+                   round(cor(y,y_hat)^2,
+                         digits = 2))
+     )
+>>>>>>> abc65ac5285fa539a5342ab3d903ead66e14fce2
 abline(lm(y_hat~y), col = "red")
 ```
 
