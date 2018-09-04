@@ -1,0 +1,408 @@
+---
+title: "TryHorseShoe"
+author: "Guido Biele"
+date: "31 august 2018"
+output: pdf_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(moments)
+library(rstan)
+```
+
+
+We start by doing some data cleaning. I just set a few values which are much different than other values for a variable to NA.
+```{r }
+load("mydata_iron.Rdata")
+
+mydata$menstrualCycleLength[mydata$menstrualCycleLength < 21 | mydata$menstrualCycleLength > 35 ] = NA
+mydata$d_iron[mydata$d_iron == 0] = NA
+mydata$Hb_drop[mydata$Hb_drop > 5] = NA
+mydata$Hb_low[mydata$Hb_low > 20] = NA
+mydata$Hb_low[mydata$Hb_low < 6] = NA
+mydata$Hb_low_wk[mydata$Hb_low_wk > 27] = NA   # left skewd variable
+mydata$Hb_current_wk[mydata$Hb_current_wk > 36] = NA  # left skewd variable
+mydata$Hb_high[mydata$Hb_high > 20] = NA
+mydata$Hb_current[mydata$Hb_current > 20] = NA
+mydata$Hb_current[mydata$Hb_current < 6] = NA
+mydata$blood_sampling_week[mydata$blood_sampling_week > 28] = NA
+mydata$s_hemeiron_dose[mydata$s_hemeiron_dose > 10] = NA
+mydata$tea_herbal[mydata$tea_herbal > 1000] = NA
+mydata$tea_black[mydata$tea_black > 1000] = NA
+mydata$milk[mydata$milk > 2200] = NA
+mydata$crp[mydata$crp > 100] = NA
+mydata$interpregnancy_interval[is.na(mydata$interpregnancy_interval)] = 0
+mydata$multiple_pregancies = 1
+mydata$multiple_pregancies[mydata$interpregnancy_interval == 0] = 0
+
+mydata$OC_duration = ordered(mydata$OC_duration)
+mydata$OC_recency = ordered(mydata$OC_recency)
+mydata$period_regular = ordered(mydata$period_regular)
+
+mydata$ironSupplement_single = factor(mydata$ironSupplement_single)
+# now a few transformations to prepare log transforms
+mydata$OC_firstuse = mydata$OC_firstuse - min(mydata$OC_firstuse,na.rm = T)+1
+mydata$ppBMI = mydata$ppBMI - min(mydata$ppBMI,na.rm = T)+1
+
+```
+
+Now lets flip left-skewed variables. This means we can use log transforms to make them more normally distributed.
+``` {r }
+vars = grep("PREG|year",
+               names(mydata),
+               value = T,
+               invert = T)
+numvars = names(which(do.call(c,lapply(mydata[,vars], function(x) class(x)[1])) == "numeric"))
+
+# flip left skewed variables
+left_skewed = names(which(apply(mydata[,numvars],2,skewness, na.rm = T) < -.7))
+for (v in left_skewed) {
+  mydata[,v] = abs(mydata[,v]-max(mydata[,v],na.rm = T)) + min(mydata[,v],na.rm = T)
+  mydata[,v] = mydata[,v] - min(mydata[,v],na.rm = T)
+}
+
+```
+
+
+Next we do log transformations for slected variables to get rid of the right-skewed values. We are also plotting histograms before and after  transformation for the variables we transform. 
+```{r, fig.height=11, fig.width=3.5} 
+
+skewed_numvars = names(which(apply(mydata[,numvars],2,skewness, na.rm = T) > .7))
+mytdata = mydata
+par(mar=c(0,3,2,1), mgp=c(2,.7,0), tck=-.01)
+par(mfrow = c(17,2))
+is_zero_inflated = c()
+is_skewed = c()
+for (v in skewed_numvars) {
+  x = mydata[,v]
+  if (mean(x == 0,na.rm = T) > .10)
+    is_zero_inflated = c(is_zero_inflated,
+                         v)
+  if(skewness(x[x>0], na.rm = T) > .7) {
+    is_skewed = c(is_skewed,v)
+    hist(x,
+         main = paste(v,round(skewness(x,na.rm = T),digits = 1)),
+         xlab = "",
+         xaxt = "n",
+         ylab = "",
+         yaxt = "n")
+    if (min(x,na.rm = T) == 0) {
+      x = x+1
+    } 
+    mytdata[,v] = log(x)
+    hist(log(x),xlab = "",
+         main = "log transformed",
+         xaxt = "n",
+         ylab = "",
+         yaxt = "n")
+  }
+}
+```
+
+
+Now lets have a first look at the correlation matrix.
+
+```{r}
+nmat = matrix(NA, ncol = length(vars), nrow = nrow(mydata))
+colnames(nmat) = vars
+for (v in vars) {
+  if (is.numeric(mydata[,v])) {
+    nmat[,v] = mytdata[,v]
+  } else {
+    nmat[,v] = as.numeric(mytdata[,v])
+  }
+}
+
+cm = cor(nmat, use = "pairwise.complete.obs")
+diag(cm) = 0
+heatmap.2(cm)
+```
+
+Lets focus on high correlations :
+
+```{r}
+large_cors = names(which(colSums(abs(cm) > .9) > 0))
+hcrs = cm[large_cors,large_cors]
+heatmap.2(hcrs)
+```
+
+So we have a few variables that seem redundant. We will deal with them by just removing them.
+
+```{r}
+remove_vars = c("multiple_pregancies","s_any_iron_Q2","Hb_low_wk","CivilStatus")
+```
+CivilStatus is just an inconvenient nominal variable that in my experience explains little in MoBa analyses, so I just remove it.
+
+
+Now we prepare data for a model with automatic shrinkage. 
+The special challange here is that we want to use quadratic terms (and later maybe all pairwise interactions) while also imputing missing data.
+Hence, we have a somewhat elaborate procedure to pre-process the data and prepare the complete design matrix in the Stan model itself.
+
+To reiterate: Outside Stan we only generate a design matrix with columns for each basic variable. Inside Stan we generate the quadratic (and interaction) terms once for all data and then at each iteration of the sampling process again for all imputeted variables.
+
+
+We start by scaling variables and saveing scaling values. The matrix preX that is prepared below is the basic design matrix that includes all variables which will be log-transformed, scaled, and used to generate quadratic terms for numeric variables in Stan.
+
+Let's define different types of variables which will be treated differently.
+
+```{r}
+use_vars = setdiff(colnames(mydata),
+                   c("sferritin","PREG_ID_2014","year",remove_vars))
+
+use_vars = names(which(colSums(is.na(mydata[,use_vars])) < 400))
+#mydata = mydata[sample(nrow(mydata),500),]
+#use_vars = use_vars[sample(length(use_vars),10)]
+
+y = log(mydata$sferritin)
+
+preX = mydata[use_vars]
+non_numeric_vars = names(which(sapply(preX[,use_vars], 
+                                      function(x) class(x)[1]) != "numeric"))
+for (v in non_numeric_vars)
+  preX[,v] = as.numeric(preX[,v])-1
+
+binary_vars = names(which(apply(preX,2,
+                                function(x) length(unique(x[!is.na(x)]))) == 2))
+transform_vars = intersect(use_vars,skewed_numvars)
+scale_vars = setdiff(use_vars,binary_vars)
+scale_vars = c(scale_vars[!(scale_vars %in% transform_vars)],
+               scale_vars[(scale_vars %in% transform_vars)])
+zero_inflated_vars = intersect(use_vars,is_zero_inflated)
+```
+
+Now we put the basic design matrix, preX, together. This also includes derived binary variables. These are derived from numeric variables that are zero-inflated and have a $0$ where the numeric variable is zero and a 1 everywhere else.
+```{r}
+preX = preX[,c(scale_vars,binary_vars)]
+
+derived_binary = preX[,zero_inflated_vars]
+derived_binary[derived_binary == 0 | is.na(derived_binary)] = 0
+derived_binary = (derived_binary != 0)*1
+colnames(derived_binary) = paste0(colnames(derived_binary),"_b")
+
+zero_inflated_vars = colnames(derived_binary)
+
+preX = cbind(preX,derived_binary)
+
+use_vars = names(preX)
+
+transf_idx = which(use_vars %in% transform_vars);
+transf_range = range(transf_idx)
+
+scale_sd = rep(NA,length(scale_vars))
+scale_mu = rep(NA,length(scale_vars))
+for (v in 1:length(scale_vars)) {
+  if(scale_vars[v] %in% transform_vars) {
+    mx = min(preX[,v],na.rm = T)
+    if (mx == 0) {
+      preX[,v] = preX[,v] + 1
+    } else if (mx > 1) {
+      preX[,v] = preX[,v] - mx + 1
+    }
+    scale_sd[v] = sd(log(preX[,v]),na.rm = T)
+    scale_mu[v] = mean(log(preX[,v]),na.rm = T)
+  } else {
+    scale_sd[v] = sd(preX[,v],na.rm = T)
+    scale_mu[v] = mean(preX[,v],na.rm = T)
+  }
+}
+
+par(mfrow = c(5,6),
+    mar=c(1.5,1.5,2,1), mgp=c(2,.2,0), tck=-.01)
+hs = sapply(scale_vars,
+            function(x) hist(preX[,x],main = x,ylab = ""))
+
+```
+
+
+Next we prepare all pairwise interactions and remove interactions of numeric variables with its derived binary variable
+```{r}
+interactions = combn(1:ncol(preX),2)
+rm_interactions = c()
+for (v in zero_inflated_vars) {
+  i1 = which(colnames(preX) == sub("_b$","",v))
+  i2 = which(colnames(preX) == v)
+  
+  rm_interactions = c(rm_interactions,
+                      c(which((interactions[1,] == i1) & (interactions[2,] == i2)),
+                        which((interactions[1,] == i2) & (interactions[2,] == i1))))
+}
+interactions = interactions[,-rm_interactions]
+```
+
+
+To speed up the fitting, we remove interaction variables that have a low entropy or are highly correlated with other (non-iteraction) variables. 
+To do this, we first need to do the scaling that will later also be done in Stan here in R.
+```{r}
+
+## do log-transformations and scaling
+N = nrow(preX)
+M = ncol(preX) - length(zero_inflated_vars)
+M_drv_bin = length(zero_inflated_vars)
+MB = M + M_drv_bin
+M_quadratic = length(scale_vars)
+MBQ = MB + M_quadratic
+N_interactions = ncol(interactions)
+MBQI = MBQ + N_interactions
+
+X_scaled = matrix(NA,nrow = N, ncol = MBQI) 
+X_scaled[,1:MB] = as.matrix(preX)
+X_scaled[is.na(X_scaled)] = 0
+
+
+for (k in 1:M_quadratic) {
+  if (k >= transf_idx[1]) {
+    X_scaled[,k][X_scaled[,k] == 0] = 1
+    X_scaled[,k] = (log(X_scaled[,k])-scale_mu[k])/scale_sd[k]
+  } else {
+    X_scaled[,k] = (X_scaled[,k]-scale_mu[k])/scale_sd[k]
+  }
+  X_scaled[,MB+k] = X_scaled[,k]^2
+}
+
+inames = c()
+for (i in 1:N_interactions) {
+  X_scaled[,MBQ + i ] = X_scaled[,interactions[1,i]] * X_scaled[,interactions[2,i]]
+}
+
+```
+
+
+Now we remove interactions with low entropy, i.e. interaction terms where the large majority of participants (199 out of 200) have the same value .
+```{r }
+entropies = c()
+for(v in (MBQ+1):ncol(X_scaled)) {
+  if (length(unique(X_scaled[,v])) > 10) {
+    d = hist(X_scaled[,v],plot = F)$counts
+  } else {
+      d = table(X_scaled[,v])
+  }
+  entropies = c(entropies,entropy(d))
+}  
+
+hist(log(entropies))
+abline(v= log(entropy(c(1,199))),col = "red")
+text(log(entropy(c(1,199))),par("usr")[4]/2,
+     "entropy < entropy for \n 1:199 distribution \n of binary variable",
+    pos = 2)
+
+# remove interactions with low entropy or no variation
+rm_interactions = which(entropies < entropy(c(1,199)))
+
+X_scaled = X_scaled[,-(rm_interactions+MBQ)]
+interactions = interactions[,-rm_interactions]
+N_interactions = ncol(rm_interactions)
+```
+We removed `r length(rm_interactions)` interactions due to low entropy.
+
+Now we are checking correlations with interaction variables and remove those that have a correlation > .9 with other non-interaction variables.
+```{r}
+cm = cor(X_scaled)
+diag(cm) = 0
+cm = abs(cm)
+
+# identify interaction terms highly correlated with basic variables
+rm_interactions = c()
+for (k in (MBQ+1):ncol(cm)) {
+  if(max(cm[1:MBQ,k]) > .9)
+    rm_interactions = c(rm_interactions,k)
+}
+
+X_scaled = X_scaled[,-(rm_interactions+MBQ)]
+interactions = interactions[,-rm_interactions]
+N_interactions = ncol(N_interactions)
+
+```
+We removed `r length(rm_interactions)` interactions due to high correlations with basic variables.
+
+
+To prepare fast imputation in the Stan model, we also generate information about which interactions need to be re-calculated after imputation in Stan. In the same section, we also generate indices for missing data.
+
+```{r}
+
+
+has_missing = which(rowSums(is.na(preX)) > 0)
+missing_interactions = matrix(0,
+                          nrow = length(has_missing),
+                          ncol = ncol(interactions))
+j = 1
+miss_row = c()
+miss_col = c()
+for (k in has_missing) {
+  missing_vars = which(is.na(preX[k,]))
+  mi = sort(c(which(interactions[1,] %in% missing_vars),
+              which(interactions[2,] %in% missing_vars)))
+  missing_interactions[j,1:length(mi)] = mi
+  
+  miss_row = c(miss_row,
+               rep(k,length(missing_vars)))
+  miss_col = c(miss_col,
+               missing_vars)
+  
+  j = j+1
+}
+missing_interactions = missing_interactions[,colSums(missing_interactions) > 0]
+N_missing_interactions = rowSums(missing_interactions > 0)
+rm(j)
+
+N_missing = length(miss_row)
+N_has_missing = length(has_missing)
+
+```
+
+
+
+Finally, we can put the data for the Stan model together
+```{r}
+preX[is.na(preX)] = 1
+standata = list(N = nrow(preX),
+                M = ncol(preX),
+                X = preX,
+                y = y,
+                m0 = 20,
+                slab_scale = .5,
+                N_missing = N_missing,
+                N_has_missing = N_has_missing,
+                miss_row = idx_miss_interacts[,1],
+                miss_col = idx_miss_interacts[,2],
+                M_quadratic = M_quadratic,
+                scale_sd = scale_sd,
+                scale_mu = scale_mu,
+                transf_idx = range(transf_idx),
+                has_missing = has_missing,
+                N_interactions = N_interactions,
+                interactions = interactions,
+                N_missing_interactions = N_missing_interactions,
+                missing_interactions = missing_interactions)
+
+```
+
+compile the stan program
+```{r, echo = F, warning = F}
+sm = stan_model("LRFH_pp_imp_q.stan", 
+                auto_write = T)
+```
+
+run the stan program (takes 1-2 hours with the full data set)
+
+```{r}
+options(mc.cores = 4)
+sf = sampling(sm,
+              data = standata,
+              iter = 500,
+              pars = c("imputations","Xi"),
+              control = list(adapt_delta = .8),
+              include = FALSE)
+```
+
+plot correlation of observed and predicted s_ferritin levels.
+```{r}
+y_hat = summary(sf,"y_hat")$summary[,"mean"]
+plot(y,y_hat,
+     main = paste0("r_square(y,y_hat)=",
+                   round(cor(y,y_hat)^2,
+                         digits = 2))
+     )
+abline(lm(y_hat~y), col = "red")
+```
+
