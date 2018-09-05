@@ -458,3 +458,69 @@ plot(y,y_hat,
 abline(lm(y_hat~y), col = "red")
 ```
 
+Lets look at the regression weights 
+
+```{r}
+plot_beta = function(b, pnames = T) {
+  k = nrow(b)
+  par(mar = c(3,3,1,1))
+  xlim = range(c(b$`2.5%`,b$`97.5%`))
+  plot(b$mean,
+       1:k,
+       xlim = xlim,
+       ylab = "",
+       yaxt = "n",
+       xlab = "beta",
+       pch = 16,
+       bty = "n",
+       xaxt = "n")
+  axis(1,at = pretty(xlim,7))
+  rect(.05,
+       par("usr")[3],
+       -.05,
+       par("usr")[4],
+       col = adjustcolor("grey", alpha = .25),
+       border = NA)
+  abline(v = 0, lty = 2, col = "grey")
+  segments(x0 = b$`2.5%`,
+           x1 = b$`97.5%`,
+           y0 = 1:k,
+           col = "grey")
+  segments(x0 = b$`25%`,
+           x1 = b$`75%`,
+           y0 = 1:k,
+           lwd = 2,
+           col = "grey")
+  segments(x0 = b$`25%`,
+           x1 = b$`75%`,
+           y0 = 1:k,
+           lwd = 3,
+           col = "grey")
+  points(b$mean,1:k, pch = 16, cex = 1.5)
+  if (pnames == T) {
+    for(j in 1:k)
+    text(x = min(b$mean),
+         y = j,
+         b$predictor[j],
+         pos = 2,
+         cex = .6)
+  }
+}
+
+library(data.table)
+b = c(colnames(preX), paste0(scale_vars,"2"))
+beta = data.table(summary(sf,"beta")$summary)
+beta[,predictor := b]
+beta[,abs := -abs(mean)]
+setkeyv(beta,"abs")
+
+plot_beta(beta, pnames = F)
+```
+
+
+This are the 20 most important predictors. Note that variables that and in 2 are quadratic terms and variables that end in _b are binary variables derived from zero-inflated numeric variables.
+
+```{r}
+plot_beta(beta[1:20,])
+```
+
