@@ -410,6 +410,7 @@ standata = list(N = nrow(preX),
 
 
 ## The Stan model
+This is a basic version of the model that doe snot include interations yet. I'll do this when I have some spare time.
 
 ``` {r}
 cat(readLines("LRFH_pp_imp_q.stan"),sep = '\n')
@@ -524,3 +525,8 @@ This are the 20 most important predictors. Note that variables that and in 2 are
 plot_beta(beta[1:20,])
 ```
 
+Thats it for now. We see that we get an $R^2$ that is OK but not great with this basic model. I can think of at least 3 things to do to approach a good prediction model:
+
+- include interaction terms in the model
+- add a variable selection step using the procedure described here https://arxiv.org/abs/1508.02502 
+- discuss out of sample prediction. In particular, we could estimate leave one out (LOO) cross validation, but this typically used in the context of model comparison, whereas we are more interested in variable selection. 
