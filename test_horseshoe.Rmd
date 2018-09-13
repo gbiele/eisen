@@ -1,5 +1,5 @@
 ---
-title: "Bayesian sparse regression to estimate s_ferritin from MoBa questionnaire data"
+title: "Bayesian sparse regression with missing data imputation in Stan"
 author: "Guido Biele"
 date: "04 September 2018"
 output:
@@ -16,7 +16,17 @@ library(bayesplot)
 library(gplots)
 ```
 
+
+This is a quick description of applying a Bayesian version of sparse regression for a prediction task.
+This model uses [Stan]("http://mc-stan.org/") via RStan to implement the regression because I prefer Bayesian inference (not everyone might agree here) and, more importantly, because it allows to do imputation of missing data and estimation parameters for the prediction model on one go.
+
+The prediction task is to predict [ferritin](https://en.wikipedia.org/wiki/Ferritin) levels measured in biological samples with questionnaire data from [MoBa](https://www.fhi.no/en/studies/moba/).
+
+[Here](https://github.com/stan-dev/rstan/wiki/RStan-Getting-Started) is the getting started information for RStan,the R-interface to Stan.
+
 ## Data preparation
+As often, this step involves lots of work to get the data in a format that is useful for prediciton.
+
 
 We start by doing some data cleaning. I just set a few values which are much different than other values for a variable to NA.
 ```{r }
@@ -410,8 +420,10 @@ standata = list(N = nrow(preX),
 
 
 ## The Stan model
-This is a basic version of the model that doe snot include interations yet. I'll do this when I have some spare time.
+This is a basic version of the model that does not include interactions yet. I'll do this when I have some spare time.
 
+
+One qualifier about imputation here: Because Stan does not work well with integer data, all variables that have an upper and lower bound are transformed to lie between 0 and 1, and imputed by applying a logit transform to a an unconstrained random imputation variable. The perfect way to solves this would be to marginalize over possible integer values, but this would get very complicated (and slower).
 ``` {r}
 cat(readLines("LRFH_pp_imp_q.stan"),sep = '\n')
 ```
@@ -460,7 +472,6 @@ abline(lm(y_hat~y), col = "red")
 ```
 
 Lets look at the regression weights 
-
 ```{r}
 plot_beta = function(b, pnames = T) {
   k = nrow(b)
@@ -519,14 +530,15 @@ plot_beta(beta, pnames = F)
 ```
 
 
-This are the 20 most important predictors. Note that variables that and in 2 are quadratic terms and variables that end in _b are binary variables derived from zero-inflated numeric variables.
+This are the 20 most important predictors. Note that variables that end in 2 are quadratic terms and variables that end in _b are binary variables derived from zero-inflated numeric variables.
 
 ```{r}
 plot_beta(beta[1:20,])
 ```
 
-Thats it for now. We see that we get an $R^2$ that is OK but not great with this basic model. I can think of at least 3 things to do to approach a good prediction model:
+That's it for now. We see that we get an $R^2$ that is OK but not great with this basic model. I can think of at least 4 things to do to approach a good prediction model:
 
 - include interaction terms in the model
 - add a variable selection step using the procedure described here https://arxiv.org/abs/1508.02502 
-- discuss out of sample prediction. In particular, we could estimate leave one out (LOO) cross validation, but this typically used in the context of model comparison, whereas we are more interested in variable selection. 
+- discuss out of sample prediction. In particular, we could estimate leave one out (LOO) cross validation, but this typically used in the context of model comparison, whereas we are more interested in variable selection.
+- implement a more sophisticated imputation model, where ones uses a regression approach to infer imputation values
